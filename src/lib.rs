@@ -8,6 +8,7 @@
     const_ptr_read,
     unchecked_math,
     const_intrinsic_copy,
+    negative_impls,
     const_inherent_unchecked_arith,
     const_intrinsic_forget,
     const_maybe_uninit_as_mut_ptr,
@@ -152,6 +153,8 @@ impl<T> Vec<T> {
 
 unsafe impl<T: Send> Send for Vec<T> {}
 unsafe impl<T: Sync> Sync for Vec<T> {}
+
+impl<T> !Drop for Vec<T> {}
 
 #[cfg(test)]
 mod tests {
