@@ -6,7 +6,9 @@
     const_trait_impl,
     const_heap,
     const_ptr_read,
+    unchecked_math,
     const_intrinsic_copy,
+    const_inherent_unchecked_arith,
     const_intrinsic_forget,
     const_maybe_uninit_as_mut_ptr,
     const_mut_refs,
@@ -16,10 +18,9 @@
 )]
 
 use core::{
-    intrinsics::{const_allocate, copy_nonoverlapping, forget},
+    intrinsics::{const_allocate, copy_nonoverlapping, forget, needs_drop},
     marker::PhantomData,
     mem::{self, align_of, MaybeUninit},
-    ops::Add,
     ptr,
     ptr::NonNull,
 };
@@ -30,20 +31,23 @@ pub struct Vec<T> {
     _marker: PhantomData<T>,
 }
 
-const fn check_align<T>() {
-    let align = align_of::<T>();
+const fn assert_safety_requirements<T>() {
     assert!(
-        (align != 0) && ((align & (align - 1)) == 0),
+        !needs_drop::<T>(),
+        "Drop of T is not possible in const context"
+    );
+
+    let alignment = align_of::<T>();
+    assert!(
+        (alignment != 0) && ((alignment & (alignment - 1)) == 0),
         "Alignment is not a power of 2"
     );
 }
 
 impl<T> Vec<T> {
     pub const fn with_capacity(cap: usize) -> Self {
-        check_align::<T>();
-        let ptr = unsafe { Self::alloc(cap) };
         Vec {
-            ptr,
+            ptr: Self::allocate(cap),
             len: 0,
             _marker: PhantomData,
         }
@@ -53,14 +57,14 @@ impl<T> Vec<T> {
         unsafe {
             ptr::write(self.ptr.as_ptr().add(self.len), elem);
         }
-        self.len += 1;
+        self.len = unsafe { self.len.unchecked_add(1) };
     }
 
     pub const fn pop(&mut self) -> Option<T> {
         if self.len == 0 {
             None
         } else {
-            self.len -= 1;
+            self.len = unsafe { self.len.unchecked_sub(1) };
             let mut tmp = MaybeUninit::<T>::uninit();
             unsafe {
                 copy_nonoverlapping(self.ptr.as_ptr().add(self.len), tmp.as_mut_ptr(), 1);
@@ -73,33 +77,34 @@ impl<T> Vec<T> {
         unsafe {
             ptr::copy(
                 self.ptr.as_ptr().add(index),
-                self.ptr.as_ptr().add(index + 1),
+                self.ptr.as_ptr().add(index.unchecked_add(1)),
                 self.len - index,
             );
             ptr::write(self.ptr.as_ptr().add(index), elem);
-            self.len += 1;
+            self.len = self.len.unchecked_add(1);
         }
     }
     pub const fn remove(&mut self, index: usize) -> T {
         assert!(index < self.len, "index out of bounds");
         unsafe {
-            self.len -= 1;
+            self.len = self.len.unchecked_sub(1);
             let result = ptr::read(self.ptr.as_ptr().add(index));
             ptr::copy(
-                self.ptr.as_ptr().add(index + 1),
+                self.ptr.as_ptr().add(index.unchecked_add(1)),
                 self.ptr.as_ptr().add(index),
-                self.len - index,
+                self.len.unchecked_sub(index),
             );
             result
         }
     }
+    const fn allocate(cap: usize) -> NonNull<T> {
+        assert_safety_requirements::<T>();
 
-    /// # Safety
-    ///
-    /// - Must be called from a const context.
-    /// - T must be aligned to a power of 2.
-    const unsafe fn alloc(cap: usize) -> NonNull<T> {
-        NonNull::new_unchecked(const_allocate(mem::size_of::<T>() * cap, align_of::<T>()) as *mut T)
+        unsafe {
+            NonNull::new_unchecked(
+                const_allocate(mem::size_of::<T>() * cap, align_of::<T>()) as *mut T
+            )
+        }
     }
 
     pub const fn len(&self) -> usize {
@@ -111,18 +116,22 @@ impl<T> Vec<T> {
 
     pub const fn for_each<F: ~const FnMut(T)>(&self, mut f: F) {
         let mut i = 0;
-        while i < self.len {
-            f(unsafe { ptr::read(self.ptr.as_ptr().add(i)) });
-            i += 1;
+        unsafe {
+            while i < self.len {
+                f(ptr::read(self.ptr.as_ptr().add(i)));
+                i = i.unchecked_add(1);
+            }
         }
         forget(f);
     }
 
     pub const fn for_each_mut<F: ~const FnMut(&mut T)>(&mut self, mut f: F) {
         let mut i = 0;
-        while i < self.len {
-            f(unsafe { &mut *self.ptr.as_ptr().add(i) });
-            i += 1;
+        unsafe {
+            while i < self.len {
+                f(&mut *self.ptr.as_ptr().add(i));
+                i = i.unchecked_add(1);
+            }
         }
         forget(f);
     }
@@ -130,9 +139,11 @@ impl<T> Vec<T> {
     pub const fn fold<F: ~const FnMut(T, T) -> T>(&self, mut f: F, init: T) -> T {
         let mut result = init;
         let mut i = 0;
-        while i < self.len {
-            result = f(unsafe { ptr::read(self.ptr.as_ptr().add(i)) }, result);
-            i += 1;
+        unsafe {
+            while i < self.len {
+                result = f(ptr::read(self.ptr.as_ptr().add(i)), result);
+                i = i.unchecked_add(1);
+            }
         }
         forget(f);
         result
