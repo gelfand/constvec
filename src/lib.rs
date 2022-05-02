@@ -172,8 +172,6 @@ unsafe impl<T: Sync> Sync for Vec<T> {}
 
 #[cfg(test)]
 mod tests {
-    use core::iter::Sum;
-
     use super::*;
     #[test]
     fn it_works() {
@@ -237,17 +235,17 @@ mod tests {
 
             const fn f(x: u64) {
                 assert!(x == 10);
-            };
+            }
             v.for_each(f);
 
             const fn f2(x: &mut u64) {
                 *x = 20;
-            };
+            }
             v.for_each_mut(f2);
 
             const fn f3(x: u64) {
                 assert!(x == 20);
-            };
+            }
             v.for_each(f3);
 
             let val = v.next().unwrap();
@@ -267,7 +265,7 @@ mod tests {
 
             const fn fold_inner(acc: u64, x: u64) -> u64 {
                 acc + x
-            };
+            }
             let val = v.fold(0, fold_inner);
             assert!(val == 2550);
         }
