@@ -17,7 +17,7 @@
 use core::{
     intrinsics::{const_allocate, const_deallocate, copy_nonoverlapping},
     marker::PhantomData,
-    mem::{self, align_of, size_of, MaybeUninit},
+    mem::{self, align_of, MaybeUninit},
     ptr,
     ptr::NonNull,
 };
@@ -39,10 +39,10 @@ const fn check_align<T>() {
 
 impl<T> Vec<T> {
     pub const fn new() -> Self {
-        assert!(size_of::<T>() != 0, "zero-sized type");
+        let cap = if mem::size_of::<T>() == 0 { !0 } else { 0 };
         Vec {
             ptr: NonNull::dangling(),
-            cap: 0,
+            cap,
             len: 0,
             _marker: PhantomData,
         }
@@ -103,11 +103,16 @@ impl<T> Vec<T> {
     }
 
     const fn grow(&mut self) {
+        assert!(mem::size_of::<T>() != 0, "capacity overflow");
+
         let new_cap = if self.cap == 0 {
             mem::size_of::<T>()
         } else {
             self.cap * 2
         };
+
+        assert!(new_cap <= isize::MAX as usize, "Allocation too large");
+
         let new_ptr = if self.cap == 0 {
             check_align::<T>();
             unsafe { const_allocate(new_cap, align_of::<T>()) }
@@ -160,6 +165,16 @@ mod tests {
             v.insert(0, 64);
             let val = v.remove(0);
             assert!(val == 64);
+        }
+    }
+    #[test]
+    fn test_zerosize() {
+        const {
+            let mut v = Vec::<()>::new();
+            v.push(());
+            assert!(v.len() == 1);
+            assert!(!v.is_empty());
+            assert!(v.pop().is_some());
         }
     }
 }
