@@ -1,25 +1,21 @@
 #![allow(incomplete_features)]
 #![no_std]
 #![feature(
-    test,
     const_ptr_write,
     const_option,
     const_trait_impl,
     const_black_box,
     const_heap,
-    optimize_attribute,
     const_ptr_read,
     unchecked_math,
     const_intrinsic_copy,
-    negative_impls,
     const_inherent_unchecked_arith,
     const_intrinsic_forget,
     const_maybe_uninit_as_mut_ptr,
     const_mut_refs,
     core_intrinsics,
     inline_const,
-    intrinsics,
-    rustc_attrs
+    intrinsics
 )]
 
 #[cfg(feature = "std")]
@@ -32,7 +28,6 @@ use core::{
     ptr,
     ptr::NonNull,
 };
-extern crate alloc;
 
 pub struct Vec<T> {
     ptr: NonNull<T>,
@@ -58,7 +53,8 @@ impl<T> Vec<T> {
     #[inline(always)]
     pub const fn with_capacity(cap: usize) -> Self {
         assert_safety_requirements::<T>();
-        let ptr = Self::allocate(cap);
+
+        let ptr = unsafe { Self::allocate(cap) };
 
         Vec {
             ptr,
@@ -108,14 +104,14 @@ impl<T> Vec<T> {
         unsafe { self.insert_unchecked(index, elem) }
     }
 
-    /// # Safety
+    /// # SAFETY:
     /// - `index` must be less than `self.cap`
     #[inline(always)]
     pub const unsafe fn insert_unchecked(&mut self, index: usize, elem: T) {
         ptr::copy(
             self.ptr.as_ptr().add(index),
             self.ptr.as_ptr().add(index.unchecked_add(1)),
-            self.len - index,
+            self.len.unchecked_sub(index),
         );
         ptr::write(self.ptr.as_ptr().add(index), elem);
         self.len = self.len.unchecked_add(1);
@@ -127,7 +123,7 @@ impl<T> Vec<T> {
         unsafe { self.remove_unchecked(index) }
     }
 
-    /// # Safety
+    /// # SAFETY:
     ///
     /// - `index` must be less than `self.len()`
     ///
@@ -143,23 +139,30 @@ impl<T> Vec<T> {
         result
     }
 
+    /// # SAFETY:
+    ///
+    /// Caller must ensure:
+    ///
+    /// - that T is properly aligned(power of 2).
+    /// - T must not require drop.
+
     #[inline(always)]
-    const fn allocate(cap: usize) -> NonNull<T> {
-        unsafe {
-            NonNull::new_unchecked(
-                const_allocate(mem::size_of::<T>() * cap, align_of::<T>()) as *mut T
-            )
-        }
+    const unsafe fn allocate(cap: usize) -> NonNull<T> {
+        NonNull::new_unchecked(const_allocate(mem::size_of::<T>() * cap, align_of::<T>()) as *mut T)
     }
+
+    /// # SAFETY:
+    ///
+    /// Caller must ensure:
+    /// That self.ptr is allocated in the same const context.
+
     #[inline(always)]
-    pub const fn deallocate(self) {
-        unsafe {
-            const_deallocate(
-                self.ptr.as_ptr() as *mut u8,
-                mem::size_of::<T>() * self.cap,
-                align_of::<T>(),
-            )
-        };
+    const unsafe fn deallocate(&self) {
+        const_deallocate(
+            self.ptr.as_ptr() as *mut u8,
+            mem::size_of::<T>() * self.cap,
+            align_of::<T>(),
+        )
     }
 
     #[inline(always)]
@@ -257,7 +260,10 @@ impl<T> Vec<T> {
     }
 
     #[inline(always)]
-    pub const fn for_each<F: ~const FnMut(T)>(&self, mut f: F) {
+    pub const fn for_each<F>(&self, mut f: F)
+    where
+        F: ~const FnMut(T),
+    {
         assert!(!needs_drop::<F>());
 
         let mut i = 0;
@@ -271,7 +277,10 @@ impl<T> Vec<T> {
     }
 
     #[inline(always)]
-    pub const fn for_each_mut<F: ~const FnMut(&mut T)>(&mut self, mut f: F) {
+    pub const fn for_each_mut<F>(&mut self, mut f: F)
+    where
+        F: ~const FnMut(&mut T),
+    {
         assert!(!needs_drop::<F>());
 
         let mut i = 0;
@@ -285,7 +294,10 @@ impl<T> Vec<T> {
     }
 
     #[inline(always)]
-    pub const fn fold<F: ~const FnMut(T, T) -> T>(&self, mut f: F, init: T) -> T {
+    pub const fn fold<F>(&self, mut f: F, init: T) -> T
+    where
+        F: ~const FnMut(T, T) -> T,
+    {
         assert!(!needs_drop::<F>());
 
         let mut result = init;
@@ -306,13 +318,7 @@ unsafe impl<T: Sync> Sync for Vec<T> {}
 
 impl<T> const Drop for Vec<T> {
     fn drop(&mut self) {
-        unsafe {
-            const_deallocate(
-                self.ptr.as_ptr() as *mut u8,
-                mem::size_of::<T>() * self.cap,
-                align_of::<T>(),
-            )
-        };
+        unsafe { self.deallocate() };
     }
 }
 
@@ -508,7 +514,8 @@ mod tests {
     #[inline(always)]
     #[allow(dead_code)]
     fn sum_non_const(iter: usize) {
-        let mut v = alloc::vec::Vec::with_capacity(iter);
+        use std::vec::Vec;
+        let mut v = Vec::with_capacity(iter);
         for i in 0..iter {
             v.push(i);
         }
